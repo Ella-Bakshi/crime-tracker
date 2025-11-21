@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'unsafe-inline' https://d3js.org https://cdn.jsdelivr.net https://www.gstatic.com https://*.firebaseapp.com https://*.googleapis.com https://apis.google.com;
+                 style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                 font-src 'self' https://fonts.gstatic.com;
+                 connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net wss://*.firebaseio.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com;
+                 frame-src https://*.firebaseapp.com https://accounts.google.com;
+                 img-src 'self' https://*.googleusercontent.com https://*.google.com data:;">
+  <title>Cyber Slavery Arrest Map</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Auth Bar -->
+    <div class="auth-bar">
+      <div class="auth-container">
+        <span id="user-info" style="display: none;"></span>
+        <button id="auth-button" class="btn btn-auth" onclick="signInWithGoogle()">Sign In</button>
+      </div>
+    </div>
+
+    <header>
+      <h1>Cyber Slavery Arrest Map</h1>
+      <p>Tracking arrests across Indian states - Hover over states to view details</p>
+    </header>
+
+    <!-- Admin Panel (hidden by default, shown only for admin) -->
+    <div id="admin-panel" class="admin-panel" style="display: none;">
+      <div class="admin-header">
+        <h2>Admin Panel</h2>
+        <span class="admin-badge">Admin Access</span>
+      </div>
+
+      <form id="arrest-form" class="admin-form" onsubmit="handleArrestFormSubmit(event)">
+        <div class="form-group">
+          <label for="state-select">State/UT</label>
+          <select id="state-select" required>
+            <option value="">Select State...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="arrest-count">Arrest Count</label>
+          <input type="number"
+                 id="arrest-count"
+                 min="0"
+                 max="999999"
+                 required
+                 placeholder="Enter count">
+        </div>
+
+        <div class="form-group form-group-checkbox">
+          <label class="checkbox-label">
+            <input type="checkbox" id="single-replace-mode">
+            <span class="checkbox-text">Replace existing count</span>
+            <span class="checkbox-hint">(unchecked = add to existing)</span>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Update</button>
+          <button type="button" class="btn btn-danger" onclick="handleDeleteState()">Delete</button>
+        </div>
+
+        <div id="form-message" class="form-message" style="display: none;"></div>
+      </form>
+
+      <div class="admin-divider"></div>
+
+      <!-- Bulk Upload Section -->
+      <div class="bulk-upload-section">
+        <h3>Bulk Upload</h3>
+        <p class="bulk-info">Upload a text file with format: <code>State Name - Count</code> (one per line)</p>
+
+        <div class="form-group form-group-checkbox">
+          <label class="checkbox-label">
+            <input type="checkbox" id="bulk-replace-mode">
+            <span class="checkbox-text">Replace existing counts</span>
+            <span class="checkbox-hint">(unchecked = add to existing)</span>
+          </label>
+        </div>
+
+        <div class="bulk-upload-area" id="bulk-upload-area">
+          <input type="file" id="bulk-file-input" accept=".txt,.csv" style="display: none;">
+          <div class="upload-prompt" onclick="document.getElementById('bulk-file-input').click()">
+            <span class="upload-icon">+</span>
+            <span>Click to select file or drag & drop</span>
+            <span class="file-types">Accepts: .txt, .csv (max 100KB)</span>
+          </div>
+        </div>
+
+        <div id="bulk-preview" class="bulk-preview" style="display: none;">
+          <h4>Preview <span id="preview-count"></span></h4>
+          <div id="preview-list" class="preview-list"></div>
+          <div id="preview-errors" class="preview-errors" style="display: none;"></div>
+          <div class="bulk-actions">
+            <button type="button" class="btn btn-primary" onclick="handleBulkUpload()">Upload All Valid</button>
+            <button type="button" class="btn btn-secondary" onclick="clearBulkPreview()">Clear</button>
+          </div>
+        </div>
+
+        <div id="bulk-message" class="form-message" style="display: none;"></div>
+      </div>
+
+      <div class="admin-info">
+        <p>Changes are saved to the database and reflected on the map immediately.</p>
+      </div>
+    </div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Tooltip -->
+    <div id="tooltip" style="display: none;">
+      <strong id="state-name"></strong>
+      <br>
+      <span>Arrests: <span id="crime-count"></span></span>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <h3>Arrest Count</h3>
+      <div class="legend-scale">
+        <span class="legend-low">Low</span>
+        <div class="legend-gradient"></div>
+        <span class="legend-high">High</span>
+      </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat-card">
+        <h4>Total Arrests</h4>
+        <div class="value" id="total-arrests">0</div>
+      </div>
+      <div class="stat-card">
+        <h4>States with Data</h4>
+        <div class="value" id="states-with-data">0</div>
+      </div>
+      <div class="stat-card">
+        <h4>Last Updated</h4>
+        <div class="value" id="last-updated">-</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK (compat version for easier integration) -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <!-- D3.js for map visualization -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
+
+  <!-- Application modules (order matters) -->
+  <script src="js/firebase-config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/firestore-data.js"></script>
+  <script src="js/tooltip.js"></script>
+  <script src="js/map.js"></script>
+
+  <!-- Initialization -->
+  <script>
+    document.addEventListener('DOMContentLoaded', async function() {
+      // Initialize Firebase first
+      initializeFirebase();
+
+      // Initialize authentication
+      initAuth();
+
+      // Populate state dropdown
+      populateStateDropdown();
+
+      // Initialize map (now loads from Firestore)
+      await initMap();
+    });
+
+    /**
+     * Populate the state dropdown with valid states
+     */
+    function populateStateDropdown() {
+      const select = document.getElementById('state-select');
+      if (!select) return;
+
+      const states = getValidStatesList();
+      states.forEach(state => {
+        const option = document.createElement('option');
+        option.value = state;
+        // Capitalize for display
+        option.textContent = state.split(' ').map(w =>
+          w.charAt(0).toUpperCase() + w.slice(1)
+        ).join(' ');
+        select.appendChild(option);
+      });
+    }
+
+    /**
+     * Handle arrest form submission
+     */
+    async function handleArrestFormSubmit(event) {
+      event.preventDefault();
+
+      const stateSelect = document.getElementById('state-select');
+      const countInput = document.getElementById('arrest-count');
+      const replaceCheckbox = document.getElementById('single-replace-mode');
+
+      const state = stateSelect.value;
+      const count = parseInt(countInput.value, 10);
+      // Checked = replace, Unchecked = additive (default)
+      const isAdditive = replaceCheckbox ? !replaceCheckbox.checked : true;
+
+      if (!state || isNaN(count)) {
+        showFormMessage('Please fill all fields', 'error');
+        return;
+      }
+
+      try {
+        showFormMessage('Updating...', 'info');
+        await updateArrestCount(state, count, isAdditive);
+        const modeText = isAdditive ? 'added' : 'set';
+        showFormMessage(`Successfully ${modeText} ${count} arrests!`, 'success');
+
+        // Refresh map
+        await refreshMap();
+
+        // Reset form
+        countInput.value = '';
+
+      } catch (error) {
+        showFormMessage(error.message || 'Update failed', 'error');
+      }
+    }
+
+    /**
+     * Handle delete state
+     */
+    async function handleDeleteState() {
+      const stateSelect = document.getElementById('state-select');
+      const state = stateSelect.value;
+
+      if (!state) {
+        showFormMessage('Please select a state to delete', 'error');
+        return;
+      }
+
+      if (!confirm(`Are you sure you want to delete arrest data for ${state}?`)) {
+        return;
+      }
+
+      try {
+        showFormMessage('Deleting...', 'info');
+        await deleteArrestRecord(state);
+        showFormMessage('Deleted successfully!', 'success');
+
+        // Refresh map
+        await refreshMap();
+
+      } catch (error) {
+        showFormMessage(error.message || 'Delete failed', 'error');
+      }
+    }
+
+    /**
+     * Show form message
+     */
+    function showFormMessage(message, type) {
+      const messageEl = document.getElementById('form-message');
+      if (!messageEl) return;
+
+      messageEl.textContent = message;
+      messageEl.className = 'form-message ' + type;
+      messageEl.style.display = 'block';
+
+      if (type === 'success') {
+        setTimeout(() => {
+          messageEl.style.display = 'none';
+        }, 3000);
+      }
+    }
+
+    // =====================================================
+    // BULK UPLOAD HANDLERS
+    // =====================================================
+
+    // Store parsed bulk data
+    let bulkParsedData = [];
+
+    // File size limit (100KB)
+    const MAX_FILE_SIZE = 100 * 1024;
+
+    // Initialize bulk upload listeners
+    document.addEventListener('DOMContentLoaded', function() {
+      const fileInput = document.getElementById('bulk-file-input');
+      const uploadArea = document.getElementById('bulk-upload-area');
+
+      if (fileInput) {
+        fileInput.addEventListener('change', handleFileSelect);
+      }
+
+      if (uploadArea) {
+        // Drag and drop handlers
+        uploadArea.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+          uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+          e.preventDefault();
+          uploadArea.classList.remove('drag-over');
+          const files = e.dataTransfer.files;
+          if (files.length > 0) {
+            processFile(files[0]);
+          }
+        });
+      }
+    });
+
+    /**
+     * Handle file selection
+     */
+    function handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (file) {
+        processFile(file);
+      }
+    }
+
+    /**
+     * Process uploaded file with security checks
+     */
+    function processFile(file) {
+      // Security: Check file extension
+      const validExtensions = ['.txt', '.csv'];
+      const fileName = file.name.toLowerCase();
+      const hasValidExt = validExtensions.some(ext => fileName.endsWith(ext));
+
+      if (!hasValidExt) {
+        showBulkMessage('Invalid file type. Only .txt and .csv allowed.', 'error');
+        return;
+      }
+
+      // Security: Check file size
+      if (file.size > MAX_FILE_SIZE) {
+        showBulkMessage('File too large. Maximum size is 100KB.', 'error');
+        return;
+      }
+
+      // Security: Check MIME type (basic check)
+      const validMimes = ['text/plain', 'text/csv', 'application/csv', ''];
+      if (!validMimes.includes(file.type)) {
+        showBulkMessage('Invalid file type.', 'error');
+        return;
+      }
+
+      // Read file
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        const content = e.target.result;
+        parseAndPreview(content);
+      };
+
+      reader.onerror = function() {
+        showBulkMessage('Failed to read file.', 'error');
+      };
+
+      reader.readAsText(file);
+    }
+
+    /**
+     * Parse file content and show preview
+     */
+    function parseAndPreview(content) {
+      // Security: Limit content length
+      if (content.length > MAX_FILE_SIZE) {
+        showBulkMessage('File content too large.', 'error');
+        return;
+      }
+
+      const lines = content.trim().split(/\r?\n/);
+      const validEntries = [];
+      const errors = [];
+      const validStates = getValidStatesList();
+
+      // Security: Limit number of lines
+      const maxLines = 100;
+      if (lines.length > maxLines) {
+        showBulkMessage(`Too many lines. Maximum ${maxLines} entries allowed.`, 'error');
+        return;
+      }
+
+      lines.forEach((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return; // Skip empty lines
+
+        // Parse line: "State Name - Count"
+        const parts = trimmed.split('-').map(s => s.trim());
+
+        if (parts.length !== 2) {
+          errors.push(`Line ${index + 1}: Invalid format "${sanitizeForDisplay(trimmed)}"`);
+          return;
+        }
+
+        // Security: Sanitize state name
+        const rawState = parts[0].replace(/[<>\"'`\\]/g, '').trim();
+        const state = rawState.toLowerCase();
+        const countStr = parts[1].replace(/[^0-9]/g, '');
+        const count = parseInt(countStr, 10);
+
+        // Validate state
+        if (!validStates.includes(state) && state !== 'cbi') {
+          errors.push(`Line ${index + 1}: Unknown state "${sanitizeForDisplay(rawState)}"`);
+          return;
+        }
+
+        // Validate count
+        if (isNaN(count) || count < 0 || count > 999999) {
+          errors.push(`Line ${index + 1}: Invalid count "${sanitizeForDisplay(parts[1])}"`);
+          return;
+        }
+
+        validEntries.push({ state, count, display: rawState });
+      });
+
+      bulkParsedData = validEntries;
+      showPreview(validEntries, errors);
+    }
+
+    /**
+     * Sanitize string for display (prevent XSS in error messages)
+     */
+    function sanitizeForDisplay(str) {
+      return str.substring(0, 50).replace(/[<>\"'`\\]/g, '');
+    }
+
+    /**
+     * Show preview of parsed data
+     */
+    function showPreview(entries, errors) {
+      const previewEl = document.getElementById('bulk-preview');
+      const listEl = document.getElementById('preview-list');
+      const errorsEl = document.getElementById('preview-errors');
+      const countEl = document.getElementById('preview-count');
+
+      if (!previewEl || !listEl) return;
+
+      // Show count
+      countEl.textContent = `(${entries.length} valid entries)`;
+
+      // Clear previous
+      listEl.innerHTML = '';
+
+      // Add valid entries
+      entries.forEach(entry => {
+        const item = document.createElement('div');
+        item.className = 'preview-item';
+        item.textContent = `${entry.display}: ${entry.count}`;
+        listEl.appendChild(item);
+      });
+
+      // Show errors if any
+      if (errors.length > 0) {
+        errorsEl.innerHTML = '';
+        const errorHeader = document.createElement('strong');
+        errorHeader.textContent = `${errors.length} errors found:`;
+        errorsEl.appendChild(errorHeader);
+
+        errors.slice(0, 10).forEach(err => {
+          const errItem = document.createElement('div');
+          errItem.textContent = err;
+          errorsEl.appendChild(errItem);
+        });
+
+        if (errors.length > 10) {
+          const more = document.createElement('div');
+          more.textContent = `... and ${errors.length - 10} more errors`;
+          errorsEl.appendChild(more);
+        }
+
+        errorsEl.style.display = 'block';
+      } else {
+        errorsEl.style.display = 'none';
+      }
+
+      previewEl.style.display = 'block';
+    }
+
+    /**
+     * Clear bulk preview
+     */
+    function clearBulkPreview() {
+      bulkParsedData = [];
+      const previewEl = document.getElementById('bulk-preview');
+      const fileInput = document.getElementById('bulk-file-input');
+
+      if (previewEl) previewEl.style.display = 'none';
+      if (fileInput) fileInput.value = '';
+
+      showBulkMessage('', '');
+    }
+
+    /**
+     * Handle bulk upload to Firestore
+     */
+    async function handleBulkUpload() {
+      if (bulkParsedData.length === 0) {
+        showBulkMessage('No valid data to upload.', 'error');
+        return;
+      }
+
+      const replaceCheckbox = document.getElementById('bulk-replace-mode');
+      // Checked = replace, Unchecked = additive (default)
+      const isAdditive = replaceCheckbox ? !replaceCheckbox.checked : true;
+
+      // Aggregate by state (handle CBI -> Delhi)
+      const aggregated = {};
+      bulkParsedData.forEach(entry => {
+        const targetState = entry.state === 'cbi' ? 'delhi' : entry.state;
+        aggregated[targetState] = (aggregated[targetState] || 0) + entry.count;
+      });
+
+      const updates = Object.entries(aggregated).map(([state, count]) => ({
+        state,
+        count
+      }));
+
+      try {
+        showBulkMessage('Uploading...', 'info');
+
+        // Use batch update with mode
+        await batchUpdateArrests(updates, isAdditive);
+
+        const modeText = isAdditive ? 'added to' : 'set for';
+        showBulkMessage(`Successfully ${modeText} ${updates.length} states!`, 'success');
+        clearBulkPreview();
+
+        // Refresh map
+        await refreshMap();
+
+      } catch (error) {
+        showBulkMessage(error.message || 'Upload failed', 'error');
+      }
+    }
+
+    /**
+     * Show bulk upload message
+     */
+    function showBulkMessage(message, type) {
+      const messageEl = document.getElementById('bulk-message');
+      if (!messageEl) return;
+
+      if (!message) {
+        messageEl.style.display = 'none';
+        return;
+      }
+
+      messageEl.textContent = message;
+      messageEl.className = 'form-message ' + type;
+      messageEl.style.display = 'block';
+
+      if (type === 'success') {
+        setTimeout(() => {
+          messageEl.style.display = 'none';
+        }, 3000);
+      }
+    }
+  </script>
+</body>
+</html>

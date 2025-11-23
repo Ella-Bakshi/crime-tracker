@@ -5,7 +5,8 @@ let mapSvg = null;
 let mapProjection = null;
 let mapPath = null;
 let geoJsonData = null;
-let currentArrestData = {};
+let currentMapData = {};
+let currentRawData = {};
 
 /**
  * State name mapping for matching GeoJSON names to data
@@ -71,13 +72,13 @@ function normalizeStateName(name) {
 }
 
 /**
- * Get arrest count for a state from current data
+ * Get data for a state from current map data
  * @param {string} stateName - State name
- * @returns {number} - Arrest count
+ * @returns {object} - { arrests, fir }
  */
-function getArrestCount(stateName) {
+function getStateData(stateName) {
   const normalized = normalizeStateName(stateName);
-  return currentArrestData[normalized] || 0;
+  return currentMapData[normalized] || { arrests: 0, fir: 0 };
 }
 
 /**
@@ -85,8 +86,10 @@ function getArrestCount(stateName) {
  * @returns {number}
  */
 function getMaxArrestCount() {
-  const values = Object.values(currentArrestData);
-  return values.length > 0 ? Math.max(...values, 1) : 1;
+  const values = Object.values(currentMapData);
+  if (values.length === 0) return 1;
+  const max = Math.max(...values.map(v => v.arrests || 0));
+  return max > 0 ? max : 1;
 }
 
 /**
@@ -135,10 +138,13 @@ async function initMap() {
 
     // Load arrest data from Firestore
     try {
-      currentArrestData = await loadArrestData();
+      const data = await loadArrestData();
+      currentMapData = data.mapData || {};
+      currentRawData = data.rawData || {};
     } catch (error) {
       // Silent fail - use empty data if Firestore unavailable
-      currentArrestData = {};
+      currentMapData = {};
+      currentRawData = {};
     }
 
     const maxCount = getMaxArrestCount();
@@ -200,10 +206,13 @@ async function initMap() {
     updateMapColors(maxCount);
 
     // Update legend
-    updateLegend(maxCount);
+    updateLegend();
 
     // Update stats
     updateStats();
+
+    // Update data table
+    updateDataTable();
 
   } catch (error) {
     // Silent fail - show user-friendly error without exposing details
@@ -219,11 +228,14 @@ async function initMap() {
  */
 async function refreshMap() {
   try {
-    currentArrestData = await loadArrestData();
+    const data = await loadArrestData();
+    currentMapData = data.mapData || {};
+    currentRawData = data.rawData || {};
     const maxCount = getMaxArrestCount();
     updateMapColors(maxCount);
-    updateLegend(maxCount);
+    updateLegend();
     updateStats();
+    updateDataTable();
   } catch (error) {
     // Silent fail - don't expose errors
   }
@@ -241,9 +253,44 @@ function updateMapColors(maxCount) {
     .duration(300)
     .style('fill', function(d) {
       const rawName = d.properties.name || d.properties.NAME || '';
-      const count = getArrestCount(rawName);
-      return getColor(count, maxCount);
+      const data = getStateData(rawName);
+      return getColor(data.arrests, maxCount);
     });
+}
+
+/**
+ * Build tooltip entries for a state
+ * Special handling for Delhi to show both Delhi Police and CBI
+ */
+function buildTooltipEntries(stateName) {
+  const normalized = normalizeStateName(stateName);
+  const entries = [];
+
+  if (normalized === 'delhi') {
+    // Show Delhi Police and CBI separately
+    const delhiData = currentRawData['delhi'] || { arrests: 0, fir: 0 };
+    const cbiData = currentRawData['cbi'] || { arrests: 0, fir: 0 };
+
+    entries.push({
+      label: 'Delhi Police',
+      arrests: delhiData.arrests,
+      fir: delhiData.fir
+    });
+    entries.push({
+      label: 'CBI',
+      arrests: cbiData.arrests,
+      fir: cbiData.fir
+    });
+  } else {
+    const data = currentRawData[normalized] || { arrests: 0, fir: 0 };
+    entries.push({
+      label: null,
+      arrests: data.arrests,
+      fir: data.fir
+    });
+  }
+
+  return entries;
 }
 
 /**
@@ -251,8 +298,8 @@ function updateMapColors(maxCount) {
  */
 function handleMouseEnter(event, d) {
   const rawName = d.properties.name || d.properties.NAME || 'Unknown';
-  const count = getArrestCount(rawName);
-  showTooltip(event, rawName, count);
+  const entries = buildTooltipEntries(rawName);
+  showTooltip(event, rawName, entries);
   d3.select(this).style('stroke-width', '2px');
 }
 
@@ -272,32 +319,49 @@ function handleMouseLeave() {
 }
 
 /**
- * Update legend with actual arrest count range
- * @param {number} maxCount - Maximum arrest count
+ * Update legend with actual count ranges
  */
-function updateLegend(maxCount) {
-  const lowLabel = document.querySelector('.legend-low');
-  const highLabel = document.querySelector('.legend-high');
+function updateLegend() {
+  const values = Object.values(currentMapData);
+  const maxArrests = values.length > 0 ? Math.max(...values.map(v => v.arrests || 0)) : 0;
+  const maxFir = values.length > 0 ? Math.max(...values.map(v => v.fir || 0)) : 0;
 
-  if (lowLabel) lowLabel.textContent = '0';
-  if (highLabel) highLabel.textContent = maxCount.toString();
+  const arrestLow = document.getElementById('arrest-low');
+  const arrestHigh = document.getElementById('arrest-high');
+  const firLow = document.getElementById('fir-low');
+  const firHigh = document.getElementById('fir-high');
+
+  if (arrestLow) arrestLow.textContent = '0';
+  if (arrestHigh) arrestHigh.textContent = maxArrests.toString();
+  if (firLow) firLow.textContent = '0';
+  if (firHigh) firHigh.textContent = maxFir.toString();
 }
 
 /**
  * Update statistics display
  */
 function updateStats() {
-  const totalEl = document.getElementById('total-arrests');
+  const totalArrestsEl = document.getElementById('total-arrests');
+  const totalFirEl = document.getElementById('total-fir');
   const statesEl = document.getElementById('states-with-data');
   const updatedEl = document.getElementById('last-updated');
 
-  if (totalEl) {
-    const total = Object.values(currentArrestData).reduce((sum, count) => sum + count, 0);
-    totalEl.textContent = total.toLocaleString();
+  const values = Object.values(currentMapData);
+
+  if (totalArrestsEl) {
+    const total = values.reduce((sum, d) => sum + (d.arrests || 0), 0);
+    totalArrestsEl.textContent = total.toLocaleString();
+  }
+
+  if (totalFirEl) {
+    const total = values.reduce((sum, d) => sum + (d.fir || 0), 0);
+    totalFirEl.textContent = total.toLocaleString();
   }
 
   if (statesEl) {
-    const statesWithData = Object.keys(currentArrestData).filter(k => currentArrestData[k] > 0).length;
+    const statesWithData = Object.keys(currentMapData).filter(k =>
+      (currentMapData[k].arrests || 0) > 0 || (currentMapData[k].fir || 0) > 0
+    ).length;
     statesEl.textContent = statesWithData.toString();
   }
 
@@ -308,6 +372,82 @@ function updateStats() {
       year: 'numeric'
     });
   }
+}
+
+/**
+ * Update the data table with state-wise breakdown
+ * Shows all states including those with 0 data
+ */
+function updateDataTable() {
+  const tableBody = document.getElementById('data-table-body');
+  if (!tableBody) return;
+
+  tableBody.innerHTML = '';
+
+  // Get all valid states
+  const allStates = getValidStatesList();
+  const rows = [];
+
+  allStates.forEach(state => {
+    // Skip 'cbi' in the loop - we'll handle it specially with Delhi
+    if (state === 'cbi') return;
+
+    const data = currentRawData[state] || { arrests: 0, fir: 0 };
+    let displayName = state.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+    // Special handling for Delhi - show as Delhi (Delhi Police)
+    if (state === 'delhi') {
+      displayName = 'Delhi (Delhi Police)';
+    }
+
+    rows.push({
+      name: displayName,
+      arrests: data.arrests || 0,
+      fir: data.fir || 0,
+      sortKey: state
+    });
+
+    // Add CBI entry right after Delhi
+    if (state === 'delhi') {
+      const cbiData = currentRawData['cbi'] || { arrests: 0, fir: 0 };
+      rows.push({
+        name: 'Delhi (CBI)',
+        arrests: cbiData.arrests || 0,
+        fir: cbiData.fir || 0,
+        sortKey: 'delhi_cbi'
+      });
+    }
+  });
+
+  // Sort: 1) By arrests (desc), 2) By FIR (desc), 3) Alphabetically for zeros
+  rows.sort((a, b) => {
+    // First: entries with arrests come first (sorted by arrest count desc)
+    if (a.arrests > 0 || b.arrests > 0) {
+      if (a.arrests !== b.arrests) return b.arrests - a.arrests;
+    }
+    // Second: entries with FIR but no arrests
+    if (a.arrests === 0 && b.arrests === 0) {
+      if (a.fir > 0 || b.fir > 0) {
+        if (a.fir !== b.fir) return b.fir - a.fir;
+      }
+    }
+    // Third: alphabetical for entries with same values
+    return a.sortKey.localeCompare(b.sortKey);
+  });
+
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    const td2 = document.createElement('td');
+    const td3 = document.createElement('td');
+    td1.textContent = row.name;
+    td2.textContent = row.arrests;
+    td3.textContent = row.fir;
+    tr.appendChild(td1);
+    tr.appendChild(td2);
+    tr.appendChild(td3);
+    tableBody.appendChild(tr);
+  });
 }
 
 /**
@@ -348,8 +488,8 @@ function addEnlargedHitAreas() {
       .style('cursor', 'pointer')
       .on('mouseenter', function(event) {
         const rawName = feature.properties.name || feature.properties.NAME || 'Unknown';
-        const count = getArrestCount(rawName);
-        showTooltip(event, rawName, count);
+        const entries = buildTooltipEntries(rawName);
+        showTooltip(event, rawName, entries);
       })
       .on('mousemove', handleMouseMove)
       .on('mouseleave', hideTooltip);

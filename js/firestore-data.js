@@ -17,7 +17,6 @@ const STATE_ALIASES = {
   'jammu & kashmir': 'jammu and kashmir',
   'j&k': 'jammu and kashmir',
   'nct of delhi': 'delhi',
-  'cbi': 'delhi',
   'orissa': 'odisha',
   'pondicherry': 'puducherry',
   'uttaranchal': 'uttarakhand'
@@ -45,29 +44,43 @@ function isValidCount(count) {
 
 async function loadArrestData() {
   const db = getFirestore();
-  if (!db) return {};
+  if (!db) return { mapData: {}, rawData: {} };
 
   try {
     const snapshot = await db.collection('arrests').get();
-    const data = {};
+    const rawData = {};
+    const mapData = {};
 
     snapshot.forEach((doc) => {
       const docData = doc.data();
-      if (docData.state && typeof docData.count === 'number') {
-        const state = normalizeStateNameForDb(docData.state);
-        data[state] = (data[state] || 0) + docData.count;
+      // Use state field if available, otherwise use document ID
+      const state = (docData.state || doc.id).toLowerCase();
+      const arrests = typeof docData.count === 'number' ? docData.count : 0;
+      const fir = typeof docData.firCount === 'number' ? docData.firCount : 0;
+
+      if (arrests > 0 || fir > 0) {
+        rawData[state] = { arrests, fir };
+
+        // For map: combine CBI into Delhi
+        const mapState = (state === 'cbi') ? 'delhi' : state;
+        if (!mapData[mapState]) {
+          mapData[mapState] = { arrests: 0, fir: 0 };
+        }
+        mapData[mapState].arrests += arrests;
+        mapData[mapState].fir += fir;
       }
     });
 
-    return data;
+    return { mapData, rawData };
   } catch (error) {
     throw new Error('Failed to load data');
   }
 }
 
-async function updateArrestCount(stateName, count, isAdditive = false) {
+async function updateArrestCount(stateName, arrestCount, firCount, isAdditive = false) {
   if (!isValidState(stateName)) throw new Error('Invalid state name');
-  if (!isValidCount(count)) throw new Error('Invalid count');
+  if (!isValidCount(arrestCount)) throw new Error('Invalid arrest count');
+  if (!isValidCount(firCount)) throw new Error('Invalid FIR count');
 
   const db = getFirestore();
   const auth = getAuth();
@@ -76,7 +89,8 @@ async function updateArrestCount(stateName, count, isAdditive = false) {
   if (!auth.currentUser) throw new Error('Authentication required');
 
   const normalizedState = normalizeStateNameForDb(stateName);
-  let countNum = parseInt(count, 10);
+  let arrestNum = parseInt(arrestCount, 10);
+  let firNum = parseInt(firCount, 10);
 
   try {
     const docRef = db.collection('arrests').doc(normalizedState);
@@ -84,15 +98,19 @@ async function updateArrestCount(stateName, count, isAdditive = false) {
     if (isAdditive) {
       const doc = await docRef.get();
       if (doc.exists) {
-        const currentCount = doc.data().count || 0;
-        countNum = currentCount + countNum;
-        if (countNum > 999999) throw new Error('Total count exceeds maximum');
+        const currentArrests = doc.data().count || 0;
+        const currentFir = doc.data().firCount || 0;
+        arrestNum = currentArrests + arrestNum;
+        firNum = currentFir + firNum;
+        if (arrestNum > 999999) throw new Error('Total arrest count exceeds maximum');
+        if (firNum > 999999) throw new Error('Total FIR count exceeds maximum');
       }
     }
 
     await docRef.set({
       state: normalizedState,
-      count: countNum,
+      count: arrestNum,
+      firCount: firNum,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: auth.currentUser.email
     });
@@ -134,12 +152,14 @@ async function batchUpdateArrests(updates, isAdditive = false) {
 
   for (const update of updates) {
     if (!isValidState(update.state)) throw new Error(`Invalid state: ${sanitizeString(update.state)}`);
-    if (!isValidCount(update.count)) throw new Error(`Invalid count for ${sanitizeString(update.state)}`);
+    if (!isValidCount(update.arrests || 0)) throw new Error(`Invalid arrest count for ${sanitizeString(update.state)}`);
+    if (!isValidCount(update.fir || 0)) throw new Error(`Invalid FIR count for ${sanitizeString(update.state)}`);
   }
 
-  let currentCounts = {};
+  let currentData = {};
   if (isAdditive) {
-    currentCounts = await loadArrestData();
+    const loaded = await loadArrestData();
+    currentData = loaded.rawData || {};
   }
 
   const batch = db.batch();
@@ -150,17 +170,20 @@ async function batchUpdateArrests(updates, isAdditive = false) {
     const normalizedState = normalizeStateNameForDb(update.state);
     const docRef = db.collection('arrests').doc(normalizedState);
 
-    let finalCount = parseInt(update.count, 10);
+    let finalArrests = parseInt(update.arrests || 0, 10);
+    let finalFir = parseInt(update.fir || 0, 10);
 
-    if (isAdditive) {
-      const existingCount = currentCounts[normalizedState] || 0;
-      finalCount = existingCount + finalCount;
-      if (finalCount > 999999) throw new Error(`Total count for ${normalizedState} exceeds maximum`);
+    if (isAdditive && currentData[normalizedState]) {
+      finalArrests += currentData[normalizedState].arrests || 0;
+      finalFir += currentData[normalizedState].fir || 0;
+      if (finalArrests > 999999) throw new Error(`Total arrests for ${normalizedState} exceeds maximum`);
+      if (finalFir > 999999) throw new Error(`Total FIR for ${normalizedState} exceeds maximum`);
     }
 
     batch.set(docRef, {
       state: normalizedState,
-      count: finalCount,
+      count: finalArrests,
+      firCount: finalFir,
       updatedAt: timestamp,
       updatedBy: userEmail
     });

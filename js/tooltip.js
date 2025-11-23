@@ -1,22 +1,60 @@
 /**
  * Tooltip functionality for the crime map
- * Displays state name and crime count on hover
+ * Displays state name, arrest count, and FIR count on hover
  */
 
 /**
  * Show tooltip with state information
  * @param {Event} event - Mouse event
  * @param {string} stateName - Name of the state
- * @param {number} count - Crime count for the state
+ * @param {Array} entries - Array of { label, arrests, fir } objects
  */
-function showTooltip(event, stateName, count) {
+function showTooltip(event, stateName, entries) {
   const tooltip = document.getElementById('tooltip');
-  const stateLabel = document.getElementById('state-name');
-  const countLabel = document.getElementById('crime-count');
+  const content = document.getElementById('tooltip-content');
 
-  // Use textContent for security (prevents XSS)
-  stateLabel.textContent = stateName;
-  countLabel.textContent = count;
+  // Build tooltip content safely
+  content.innerHTML = '';
+
+  // State name header
+  const header = document.createElement('strong');
+  header.textContent = stateName;
+  content.appendChild(header);
+
+  // Add each entry
+  entries.forEach(entry => {
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'tooltip-entry';
+
+    if (entry.label) {
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'tooltip-label';
+      labelSpan.textContent = entry.label;
+      entryDiv.appendChild(labelSpan);
+    }
+
+    const dataDiv = document.createElement('div');
+    dataDiv.className = 'tooltip-data';
+
+    const arrestSpan = document.createElement('span');
+    const arrestLabel = document.createTextNode('Arrests: ');
+    const arrestValue = document.createElement('strong');
+    arrestValue.textContent = entry.arrests || 0;
+    arrestSpan.appendChild(arrestLabel);
+    arrestSpan.appendChild(arrestValue);
+    dataDiv.appendChild(arrestSpan);
+
+    const firSpan = document.createElement('span');
+    const firLabel = document.createTextNode('FIRs: ');
+    const firValue = document.createElement('strong');
+    firValue.textContent = entry.fir || 0;
+    firSpan.appendChild(firLabel);
+    firSpan.appendChild(firValue);
+    dataDiv.appendChild(firSpan);
+
+    entryDiv.appendChild(dataDiv);
+    content.appendChild(entryDiv);
+  });
 
   tooltip.style.display = 'block';
   moveTooltip(event);

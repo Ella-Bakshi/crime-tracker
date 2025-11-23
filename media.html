@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseapp.com https://*.googleapis.com https://apis.google.com;
+                 style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                 font-src 'self' https://fonts.gstatic.com;
+                 connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net wss://*.firebaseio.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com;
+                 frame-src https://*.firebaseapp.com https://accounts.google.com https://www.youtube.com https://youtube.com;
+                 img-src 'self' https://*.googleusercontent.com https://*.google.com https://img.youtube.com https://i.ytimg.com data:;">
+  <title>Media Coverage - Cyber Slavery Arrest Map</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/media.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Auth Bar -->
+    <div class="auth-bar">
+      <div class="auth-container">
+        <a href="index.html" class="btn btn-secondary">Back to Map</a>
+        <span id="user-info" style="display: none;"></span>
+        <button id="auth-button" class="btn btn-auth" onclick="signInWithGoogle()">Sign In</button>
+      </div>
+    </div>
+
+    <header>
+      <h1>Media Coverage</h1>
+      <p>State-wise media coverage of cyber slavery cases</p>
+    </header>
+
+    <!-- Admin Panel (hidden by default, shown only for admin) -->
+    <div id="admin-panel" class="admin-panel" style="display: none;">
+      <div class="admin-header">
+        <h2>Add Media</h2>
+        <span class="admin-badge">Admin Access</span>
+      </div>
+
+      <form id="media-form" class="admin-form media-admin-form" onsubmit="handleMediaFormSubmit(event)">
+        <div class="form-group">
+          <label for="media-state-select">State</label>
+          <select id="media-state-select" required>
+            <option value="">Select State...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="media-link">Media Link</label>
+          <input type="url"
+                 id="media-link"
+                 required
+                 placeholder="https://..."
+                 pattern="https?://.*">
+        </div>
+
+        <div class="form-group">
+          <label for="media-title">Title/Headline</label>
+          <input type="text"
+                 id="media-title"
+                 required
+                 maxlength="200"
+                 placeholder="Enter headline">
+        </div>
+
+        <div class="form-group">
+          <label for="media-type">Type</label>
+          <select id="media-type" required>
+            <option value="article">Article</option>
+            <option value="video">Video</option>
+          </select>
+        </div>
+
+        <div class="form-group form-group-checkbox" id="single-confirm-group" style="display: none;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="single-confirm-domain">
+            <span class="checkbox-text">I confirm this is a trusted source</span>
+            <span class="checkbox-hint">(required for non-whitelisted domains)</span>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Add Media</button>
+        </div>
+
+        <div id="media-form-message" class="form-message" style="display: none;"></div>
+      </form>
+
+      <div class="admin-divider"></div>
+
+      <!-- Bulk Upload Section -->
+      <div class="bulk-upload-section">
+        <h3>Bulk Upload Media</h3>
+        <p class="bulk-info">Upload a text file with format: <code>State - Link - Title - Type</code> (one per line)</p>
+        <p class="bulk-info small">Use " - " (space-hyphen-space) as separator. Type: article or video. Title can be empty. gov.in links auto-allowed.</p>
+
+        <div class="form-group form-group-checkbox" id="bulk-confirm-group" style="display: none;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="bulk-confirm-domain">
+            <span class="checkbox-text">I confirm all non-whitelisted links are from trusted sources</span>
+          </label>
+        </div>
+
+        <div class="bulk-upload-area" id="media-bulk-upload-area">
+          <input type="file" id="media-bulk-file-input" accept=".txt,.csv" style="display: none;">
+          <div class="upload-prompt" onclick="document.getElementById('media-bulk-file-input').click()">
+            <span class="upload-icon">+</span>
+            <span>Click to select file or drag & drop</span>
+            <span class="file-types">Accepts: .txt, .csv (max 100KB)</span>
+          </div>
+        </div>
+
+        <div id="media-bulk-preview" class="bulk-preview" style="display: none;">
+          <h4>Preview <span id="media-preview-count"></span></h4>
+          <div id="media-preview-list" class="preview-list"></div>
+          <div id="media-preview-errors" class="preview-errors" style="display: none;"></div>
+          <div class="bulk-actions">
+            <button type="button" class="btn btn-primary" onclick="handleMediaBulkUpload()">Upload All Valid</button>
+            <button type="button" class="btn btn-secondary" onclick="clearMediaBulkPreview()">Clear</button>
+          </div>
+        </div>
+
+        <div id="media-bulk-message" class="form-message" style="display: none;"></div>
+      </div>
+    </div>
+
+    <!-- Media Grid by State -->
+    <div id="media-container" class="media-container">
+      <div class="loading">Loading media...</div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <!-- Application modules -->
+  <script src="js/firebase-config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/firestore-data.js"></script>
+  <script src="js/media-data.js"></script>
+
+  <!-- Initialization -->
+  <script>
+    document.addEventListener('DOMContentLoaded', async function() {
+      initializeFirebase();
+      initAuth();
+      populateMediaStateDropdown();
+      await loadAndDisplayMedia();
+    });
+
+    // Allowed domains for media links (whitelist)
+    const ALLOWED_DOMAINS = [
+      'youtube.com', 'www.youtube.com', 'youtu.be',
+      'ndtv.com', 'www.ndtv.com',
+      'thehindu.com', 'www.thehindu.com',
+      'timesofindia.indiatimes.com',
+      'hindustantimes.com', 'www.hindustantimes.com',
+      'indianexpress.com', 'www.indianexpress.com',
+      'news18.com', 'www.news18.com',
+      'aajtak.in', 'www.aajtak.in',
+      'bbc.com', 'www.bbc.com', 'bbc.co.uk', 'www.bbc.co.uk',
+      'reuters.com', 'www.reuters.com',
+      'economictimes.indiatimes.com',
+      'livemint.com', 'www.livemint.com',
+      'deccanherald.com', 'www.deccanherald.com',
+      'telegraphindia.com', 'www.telegraphindia.com',
+      'thequint.com', 'www.thequint.com',
+      'scroll.in',
+      'firstpost.com', 'www.firstpost.com',
+      'indiatoday.in', 'www.indiatoday.in',
+      'zeenews.india.com', 'zeenews.com',
+      'abplive.com', 'www.abplive.com'
+    ];
+
+    /**
+     * Check if URL is from gov.in domain
+     */
+    function isGovDomain(url) {
+      try {
+        const urlObj = new URL(url);
+        const hostname = urlObj.hostname.toLowerCase();
+        return hostname.endsWith('.gov.in') || hostname === 'gov.in';
+      } catch {
+        return false;
+      }
+    }
+
+    /**
+     * Validate URL is from allowed domain (prevent open redirect)
+     */
+    function isAllowedDomain(url) {
+      try {
+        const urlObj = new URL(url);
+        const hostname = urlObj.hostname.toLowerCase();
+        // gov.in is always allowed
+        if (hostname.endsWith('.gov.in') || hostname === 'gov.in') {
+          return true;
+        }
+        return ALLOWED_DOMAINS.some(domain =>
+          hostname === domain || hostname.endsWith('.' + domain)
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    /**
+     * Check if URL needs confirmation (not whitelisted and not gov.in)
+     */
+    function needsConfirmation(url) {
+      return !isAllowedDomain(url) && !isGovDomain(url);
+    }
+
+    /**
+     * Sanitize URL for security
+     */
+    function sanitizeUrl(url) {
+      try {
+        const urlObj = new URL(url);
+        // Only allow http and https
+        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+          return null;
+        }
+        // Prevent javascript: URLs
+        if (urlObj.href.toLowerCase().includes('javascript:')) {
+          return null;
+        }
+        return urlObj.href;
+      } catch {
+        return null;
+      }
+    }
+
+    /**
+     * Extract YouTube video ID
+     */
+    function getYouTubeVideoId(url) {
+      try {
+        const urlObj = new URL(url);
+        if (urlObj.hostname.includes('youtube.com')) {
+          return urlObj.searchParams.get('v');
+        } else if (urlObj.hostname === 'youtu.be') {
+          return urlObj.pathname.slice(1);
+        }
+      } catch {}
+      return null;
+    }
+
+    /**
+     * Populate state dropdown
+     */
+    function populateMediaStateDropdown() {
+      const select = document.getElementById('media-state-select');
+      if (!select) return;
+
+      const states = getValidStatesList();
+      states.forEach(state => {
+        const option = document.createElement('option');
+        option.value = state;
+        option.textContent = state.split(' ').map(w =>
+          w.charAt(0).toUpperCase() + w.slice(1)
+        ).join(' ');
+        select.appendChild(option);
+      });
+    }
+
+    /**
+     * Show/hide confirmation checkbox based on link domain
+     */
+    function checkSingleLinkDomain() {
+      const linkInput = document.getElementById('media-link');
+      const confirmGroup = document.getElementById('single-confirm-group');
+      const link = linkInput.value.trim();
+
+      if (link && needsConfirmation(link)) {
+        confirmGroup.style.display = 'block';
+      } else {
+        confirmGroup.style.display = 'none';
+      }
+    }
+
+    // Add event listener for link input
+    document.addEventListener('DOMContentLoaded', function() {
+      const linkInput = document.getElementById('media-link');
+      if (linkInput) {
+        linkInput.addEventListener('input', checkSingleLinkDomain);
+        linkInput.addEventListener('change', checkSingleLinkDomain);
+      }
+    });
+
+    /**
+     * Handle media form submission
+     */
+    async function handleMediaFormSubmit(event) {
+      event.preventDefault();
+
+      const stateSelect = document.getElementById('media-state-select');
+      const linkInput = document.getElementById('media-link');
+      const titleInput = document.getElementById('media-title');
+      const typeSelect = document.getElementById('media-type');
+      const confirmCheckbox = document.getElementById('single-confirm-domain');
+
+      const state = stateSelect.value;
+      const link = linkInput.value.trim();
+      const title = titleInput.value.trim();
+      const type = typeSelect.value;
+
+      // Validate
+      if (!state || !link || !title) {
+        showMediaMessage('Please fill all fields', 'error');
+        return;
+      }
+
+      const sanitizedUrl = sanitizeUrl(link);
+      if (!sanitizedUrl) {
+        showMediaMessage('Invalid URL', 'error');
+        return;
+      }
+
+      // Check domain - gov.in and whitelisted are always allowed
+      if (needsConfirmation(link)) {
+        if (!confirmCheckbox || !confirmCheckbox.checked) {
+          showMediaMessage('Please confirm this is a trusted source', 'error');
+          return;
+        }
+      }
+
+      try {
+        showMediaMessage('Adding media...', 'info');
+        await addMediaItem(state, sanitizedUrl, title, type);
+        showMediaMessage('Media added successfully!', 'success');
+
+        // Reset form
+        linkInput.value = '';
+        titleInput.value = '';
+        if (confirmCheckbox) confirmCheckbox.checked = false;
+        document.getElementById('single-confirm-group').style.display = 'none';
+
+        // Refresh display
+        await loadAndDisplayMedia();
+
+      } catch (error) {
+        showMediaMessage(error.message || 'Failed to add media', 'error');
+      }
+    }
+
+    /**
+     * Show form message
+     */
+    function showMediaMessage(message, type) {
+      const messageEl = document.getElementById('media-form-message');
+      if (!messageEl) return;
+
+      messageEl.textContent = message;
+      messageEl.className = 'form-message ' + type;
+      messageEl.style.display = 'block';
+
+      if (type === 'success') {
+        setTimeout(() => {
+          messageEl.style.display = 'none';
+        }, 3000);
+      }
+    }
+
+    /**
+     * Load and display all media
+     */
+    async function loadAndDisplayMedia() {
+      const container = document.getElementById('media-container');
+      if (!container) return;
+
+      try {
+        const mediaData = await loadMediaData();
+        container.innerHTML = '';
+
+        if (Object.keys(mediaData).length === 0) {
+          container.innerHTML = '<p class="no-data">No media coverage added yet.</p>';
+          return;
+        }
+
+        // Group CBI under Delhi
+        const groupedData = {};
+        Object.keys(mediaData).forEach(state => {
+          if (state === 'cbi') {
+            // Add CBI items under delhi
+            if (!groupedData['delhi']) {
+              groupedData['delhi'] = { 'Delhi Police': [], 'CBI': [] };
+            }
+            groupedData['delhi']['CBI'] = mediaData[state];
+          } else if (state === 'delhi') {
+            if (!groupedData['delhi']) {
+              groupedData['delhi'] = { 'Delhi Police': [], 'CBI': [] };
+            }
+            groupedData['delhi']['Delhi Police'] = mediaData[state];
+          } else {
+            groupedData[state] = { items: mediaData[state] };
+          }
+        });
+
+        // Sort states alphabetically
+        const sortedStates = Object.keys(groupedData).sort();
+
+        sortedStates.forEach(state => {
+          const stateData = groupedData[state];
+
+          const section = document.createElement('div');
+          section.className = 'media-section';
+
+          const stateTitle = state.split(' ').map(w =>
+            w.charAt(0).toUpperCase() + w.slice(1)
+          ).join(' ');
+
+          section.innerHTML = `<h3 class="state-heading">${escapeHtml(stateTitle)}</h3>`;
+
+          // Check if this is Delhi with sub-groups
+          if (state === 'delhi' && (stateData['Delhi Police'] || stateData['CBI'])) {
+            // Delhi Police section
+            if (stateData['Delhi Police'] && stateData['Delhi Police'].length > 0) {
+              const subHeading = document.createElement('h4');
+              subHeading.className = 'sub-heading';
+              subHeading.textContent = 'Delhi Police';
+              section.appendChild(subHeading);
+
+              const grid = document.createElement('div');
+              grid.className = 'media-grid';
+              stateData['Delhi Police'].forEach(item => {
+                const card = createMediaCard(item);
+                if (card) grid.appendChild(card);
+              });
+              section.appendChild(grid);
+            }
+
+            // CBI section
+            if (stateData['CBI'] && stateData['CBI'].length > 0) {
+              const subHeading = document.createElement('h4');
+              subHeading.className = 'sub-heading';
+              subHeading.textContent = 'CBI';
+              section.appendChild(subHeading);
+
+              const grid = document.createElement('div');
+              grid.className = 'media-grid';
+              stateData['CBI'].forEach(item => {
+                const card = createMediaCard(item);
+                if (card) grid.appendChild(card);
+              });
+              section.appendChild(grid);
+            }
+
+            // Only add section if it has content
+            if ((stateData['Delhi Police'] && stateData['Delhi Police'].length > 0) ||
+                (stateData['CBI'] && stateData['CBI'].length > 0)) {
+              container.appendChild(section);
+            }
+          } else if (stateData.items && stateData.items.length > 0) {
+            const grid = document.createElement('div');
+            grid.className = 'media-grid';
+            stateData.items.forEach(item => {
+              const card = createMediaCard(item);
+              if (card) grid.appendChild(card);
+            });
+            section.appendChild(grid);
+            container.appendChild(section);
+          }
+        });
+
+      } catch (error) {
+        container.innerHTML = '<p class="error-message">Failed to load media</p>';
+      }
+    }
+
+    /**
+     * Create media card element
+     */
+    function createMediaCard(item) {
+      if (!item || !item.link || !item.title) return null;
+
+      // Sanitize URL (allows confirmed URLs stored in Firestore)
+      const sanitizedUrl = sanitizeUrl(item.link);
+      if (!sanitizedUrl) return null;
+
+      const card = document.createElement('div');
+      card.className = 'media-card';
+
+      let thumbnailHtml = '';
+
+      if (item.type === 'video') {
+        const videoId = getYouTubeVideoId(sanitizedUrl);
+        if (videoId) {
+          thumbnailHtml = `<img src="https://img.youtube.com/vi/${escapeHtml(videoId)}/mqdefault.jpg"
+                               alt="Video thumbnail" class="media-thumbnail">
+                          <span class="video-badge">Video</span>`;
+        } else {
+          thumbnailHtml = `<div class="media-placeholder video-placeholder">Video</div>`;
+        }
+      } else {
+        thumbnailHtml = `<div class="media-placeholder article-placeholder">Article</div>`;
+      }
+
+      // Admin remove button
+      const removeBtn = isAdminUser() && item.id ?
+        `<button class="media-remove-btn" onclick="handleMediaDelete('${escapeHtml(item.id)}')" title="Remove">&times;</button>` : '';
+
+      // Use data attribute for URL, handle click with JS for extra safety
+      card.innerHTML = `
+        ${removeBtn}
+        <div class="media-thumbnail-container">
+          ${thumbnailHtml}
+        </div>
+        <div class="media-info">
+          <h4 class="media-title">${escapeHtml(item.title)}</h4>
+          <a href="${escapeHtml(sanitizedUrl)}"
+             target="_blank"
+             rel="noopener noreferrer"
+             class="media-link-btn"
+             onclick="return confirmNavigation(this)">
+            View ${item.type === 'video' ? 'Video' : 'Article'}
+          </a>
+        </div>
+      `;
+
+      return card;
+    }
+
+    /**
+     * Handle media deletion
+     */
+    async function handleMediaDelete(mediaId) {
+      if (!confirm('Are you sure you want to remove this media?')) return;
+
+      try {
+        await deleteMediaItem(mediaId);
+        await loadAndDisplayMedia();
+      } catch (error) {
+        alert('Failed to delete: ' + (error.message || 'Unknown error'));
+      }
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     */
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    /**
+     * Confirm navigation (extra security layer)
+     */
+    function confirmNavigation(link) {
+      const url = link.href;
+      // All links stored in Firestore were confirmed by admin
+      // Just validate the URL is safe (no javascript:, etc.)
+      if (!sanitizeUrl(url)) {
+        alert('This link appears to be invalid.');
+        return false;
+      }
+      return true;
+    }
+
+    // ==========================================
+    // BULK UPLOAD FUNCTIONALITY
+    // ==========================================
+
+    let parsedBulkMedia = [];
+    let bulkHasNonWhitelisted = false;
+
+    /**
+     * Initialize bulk upload event listeners
+     */
+    document.addEventListener('DOMContentLoaded', function() {
+      const fileInput = document.getElementById('media-bulk-file-input');
+      const uploadArea = document.getElementById('media-bulk-upload-area');
+
+      if (fileInput) {
+        fileInput.addEventListener('change', handleMediaFileSelect);
+      }
+
+      if (uploadArea) {
+        uploadArea.addEventListener('dragover', handleDragOver);
+        uploadArea.addEventListener('dragleave', handleDragLeave);
+        uploadArea.addEventListener('drop', handleFileDrop);
+      }
+    });
+
+    /**
+     * Handle drag over
+     */
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.classList.add('drag-over');
+    }
+
+    /**
+     * Handle drag leave
+     */
+    function handleDragLeave(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.classList.remove('drag-over');
+    }
+
+    /**
+     * Handle file drop
+     */
+    function handleFileDrop(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.classList.remove('drag-over');
+
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        processMediaFile(files[0]);
+      }
+    }
+
+    /**
+     * Handle file selection via input
+     */
+    function handleMediaFileSelect(e) {
+      const files = e.target.files;
+      if (files.length > 0) {
+        processMediaFile(files[0]);
+      }
+    }
+
+    /**
+     * Process uploaded file
+     */
+    function processMediaFile(file) {
+      // Validate file type
+      if (!file.name.match(/\.(txt|csv)$/i)) {
+        showMediaBulkMessage('Invalid file type. Please use .txt or .csv', 'error');
+        return;
+      }
+
+      // Validate file size (max 100KB)
+      if (file.size > 100 * 1024) {
+        showMediaBulkMessage('File too large. Maximum size is 100KB', 'error');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const content = e.target.result;
+        parseMediaBulkContent(content);
+      };
+      reader.onerror = function() {
+        showMediaBulkMessage('Error reading file', 'error');
+      };
+      reader.readAsText(file);
+    }
+
+    /**
+     * Parse bulk upload content
+     * Format: State - Link - Title - Type (one per line)
+     * Uses " - " (with spaces) as delimiter to avoid breaking URLs
+     */
+    function parseMediaBulkContent(content) {
+      const lines = content.split('\n').filter(line => line.trim());
+      const validStates = getValidStatesList();
+
+      parsedBulkMedia = [];
+      const errors = [];
+      bulkHasNonWhitelisted = false;
+
+      lines.forEach((line, index) => {
+        const lineNum = index + 1;
+        // Split by " - " (with spaces) to avoid breaking URLs with hyphens
+        const parts = line.split(' - ').map(p => p.trim());
+
+        if (parts.length < 2) {
+          errors.push(`Line ${lineNum}: Invalid format (use "State - Link - Title - Type")`);
+          return;
+        }
+
+        const state = parts[0].toLowerCase();
+        const link = parts[1];
+        let title = parts[2] || '';
+        let type = (parts[3] || 'article').toLowerCase();
+
+        // Validate state (case insensitive)
+        const normalizedState = normalizeStateForMedia(state);
+        if (!normalizedState || !validStates.includes(normalizedState)) {
+          errors.push(`Line ${lineNum}: Invalid state "${parts[0]}"`);
+          return;
+        }
+
+        // Validate and sanitize URL
+        const sanitizedUrl = sanitizeUrl(link);
+        if (!sanitizedUrl) {
+          errors.push(`Line ${lineNum}: Invalid URL "${link}"`);
+          return;
+        }
+
+        // Validate type
+        if (type !== 'article' && type !== 'video') {
+          type = 'article';
+        }
+
+        // If title is empty, use domain as placeholder
+        if (!title) {
+          try {
+            const urlObj = new URL(sanitizedUrl);
+            title = urlObj.hostname + ' - ' + urlObj.pathname.slice(0, 30);
+          } catch {
+            title = sanitizedUrl.substring(0, 50);
+          }
+        }
+
+        // Check if needs confirmation
+        if (needsConfirmation(sanitizedUrl)) {
+          bulkHasNonWhitelisted = true;
+        }
+
+        parsedBulkMedia.push({
+          state: normalizedState,
+          link: sanitizedUrl,
+          title: title.substring(0, 200),
+          type: type,
+          needsConfirm: needsConfirmation(sanitizedUrl)
+        });
+      });
+
+      // Show preview
+      showMediaBulkPreview(errors);
+    }
+
+    /**
+     * Normalize state name for media (case insensitive with aliases)
+     */
+    function normalizeStateForMedia(state) {
+      const lower = state.toLowerCase().trim();
+      const aliases = {
+        'andaman & nicobar': 'andaman and nicobar',
+        'andaman and nicobar islands': 'andaman and nicobar',
+        'jammu & kashmir': 'jammu and kashmir',
+        'j&k': 'jammu and kashmir',
+        'nct of delhi': 'delhi',
+        'orissa': 'odisha',
+        'pondicherry': 'puducherry',
+        'uttaranchal': 'uttarakhand'
+      };
+      return aliases[lower] || lower;
+    }
+
+    /**
+     * Show bulk upload preview
+     */
+    function showMediaBulkPreview(errors) {
+      const previewContainer = document.getElementById('media-bulk-preview');
+      const previewList = document.getElementById('media-preview-list');
+      const previewCount = document.getElementById('media-preview-count');
+      const previewErrors = document.getElementById('media-preview-errors');
+      const confirmGroup = document.getElementById('bulk-confirm-group');
+
+      if (!previewContainer || !previewList) return;
+
+      // Show/hide confirmation checkbox
+      if (bulkHasNonWhitelisted) {
+        confirmGroup.style.display = 'block';
+      } else {
+        confirmGroup.style.display = 'none';
+      }
+
+      // Update count
+      previewCount.textContent = `(${parsedBulkMedia.length} valid items)`;
+
+      // Build preview list
+      previewList.innerHTML = '';
+      parsedBulkMedia.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = 'preview-item' + (item.needsConfirm ? ' needs-confirm' : '');
+
+        const stateDisplay = item.state.split(' ').map(w =>
+          w.charAt(0).toUpperCase() + w.slice(1)
+        ).join(' ');
+
+        div.innerHTML = `
+          <span class="preview-num">${index + 1}.</span>
+          <span class="preview-state">${escapeHtml(stateDisplay)}</span>
+          <span class="preview-type ${item.type}">${item.type}</span>
+          <span class="preview-title">${escapeHtml(item.title)}</span>
+          ${item.needsConfirm ? '<span class="preview-warning">*</span>' : ''}
+        `;
+        previewList.appendChild(div);
+      });
+
+      // Show errors
+      if (errors.length > 0) {
+        previewErrors.innerHTML = '<strong>Errors:</strong><br>' +
+          errors.map(e => escapeHtml(e)).join('<br>');
+        previewErrors.style.display = 'block';
+      } else {
+        previewErrors.style.display = 'none';
+      }
+
+      previewContainer.style.display = 'block';
+
+      // Hide any previous message
+      document.getElementById('media-bulk-message').style.display = 'none';
+    }
+
+    /**
+     * Handle bulk upload submission
+     */
+    async function handleMediaBulkUpload() {
+      if (parsedBulkMedia.length === 0) {
+        showMediaBulkMessage('No valid items to upload', 'error');
+        return;
+      }
+
+      // Check confirmation if needed
+      if (bulkHasNonWhitelisted) {
+        const confirmCheckbox = document.getElementById('bulk-confirm-domain');
+        if (!confirmCheckbox || !confirmCheckbox.checked) {
+          showMediaBulkMessage('Please confirm non-whitelisted links are from trusted sources', 'error');
+          return;
+        }
+      }
+
+      showMediaBulkMessage('Uploading media...', 'info');
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const item of parsedBulkMedia) {
+        try {
+          await addMediaItem(item.state, item.link, item.title, item.type);
+          successCount++;
+        } catch (error) {
+          failCount++;
+        }
+      }
+
+      if (failCount === 0) {
+        showMediaBulkMessage(`Successfully uploaded ${successCount} items!`, 'success');
+      } else {
+        showMediaBulkMessage(`Uploaded ${successCount} items, ${failCount} failed`, 'error');
+      }
+
+      // Clear preview and refresh display
+      clearMediaBulkPreview();
+      await loadAndDisplayMedia();
+    }
+
+    /**
+     * Clear bulk upload preview
+     */
+    function clearMediaBulkPreview() {
+      parsedBulkMedia = [];
+      bulkHasNonWhitelisted = false;
+
+      const previewContainer = document.getElementById('media-bulk-preview');
+      const confirmGroup = document.getElementById('bulk-confirm-group');
+      const confirmCheckbox = document.getElementById('bulk-confirm-domain');
+      const fileInput = document.getElementById('media-bulk-file-input');
+
+      if (previewContainer) previewContainer.style.display = 'none';
+      if (confirmGroup) confirmGroup.style.display = 'none';
+      if (confirmCheckbox) confirmCheckbox.checked = false;
+      if (fileInput) fileInput.value = '';
+    }
+
+    /**
+     * Show bulk upload message
+     */
+    function showMediaBulkMessage(message, type) {
+      const messageEl = document.getElementById('media-bulk-message');
+      if (!messageEl) return;
+
+      messageEl.textContent = message;
+      messageEl.className = 'form-message ' + type;
+      messageEl.style.display = 'block';
+
+      if (type === 'success') {
+        setTimeout(() => {
+          messageEl.style.display = 'none';
+        }, 5000);
+      }
+    }
+  </script>
+</body>
+</html>

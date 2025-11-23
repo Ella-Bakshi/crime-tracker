@@ -19,13 +19,14 @@
     <!-- Auth Bar -->
     <div class="auth-bar">
       <div class="auth-container">
+        <a href="media.html" class="btn btn-secondary">Media Coverage</a>
         <span id="user-info" style="display: none;"></span>
         <button id="auth-button" class="btn btn-auth" onclick="signInWithGoogle()">Sign In</button>
       </div>
     </div>
 
     <header>
-      <h1>Cyber Slavery Arrest Map</h1>
+      <h1>Cyber Slavery Arrest Map for November</h1>
       <p>Tracking arrests across Indian states - Hover over states to view details</p>
     </header>
 
@@ -51,7 +52,17 @@
                  min="0"
                  max="999999"
                  required
-                 placeholder="Enter count">
+                 placeholder="Enter arrest count">
+        </div>
+
+        <div class="form-group">
+          <label for="fir-count">FIR Count</label>
+          <input type="number"
+                 id="fir-count"
+                 min="0"
+                 max="999999"
+                 required
+                 placeholder="Enter FIR count">
         </div>
 
         <div class="form-group form-group-checkbox">
@@ -75,7 +86,7 @@
       <!-- Bulk Upload Section -->
       <div class="bulk-upload-section">
         <h3>Bulk Upload</h3>
-        <p class="bulk-info">Upload a text file with format: <code>State Name - Count</code> (one per line)</p>
+        <p class="bulk-info">Upload a text file with format: <code>State Name - Arrests - FIRs</code> (one per line)</p>
 
         <div class="form-group form-group-checkbox">
           <label class="checkbox-label">
@@ -117,18 +128,26 @@
 
     <!-- Tooltip -->
     <div id="tooltip" style="display: none;">
-      <strong id="state-name"></strong>
-      <br>
-      <span>Arrests: <span id="crime-count"></span></span>
+      <div id="tooltip-content"></div>
     </div>
 
     <!-- Legend -->
     <div class="legend">
-      <h3>Arrest Count</h3>
-      <div class="legend-scale">
-        <span class="legend-low">Low</span>
-        <div class="legend-gradient"></div>
-        <span class="legend-high">High</span>
+      <div class="legend-item">
+        <h4>Arrests</h4>
+        <div class="legend-scale">
+          <span class="legend-low" id="arrest-low">0</span>
+          <div class="legend-gradient"></div>
+          <span class="legend-high" id="arrest-high">0</span>
+        </div>
+      </div>
+      <div class="legend-item">
+        <h4>FIRs</h4>
+        <div class="legend-scale">
+          <span class="legend-low" id="fir-low">0</span>
+          <div class="legend-gradient legend-gradient-fir"></div>
+          <span class="legend-high" id="fir-high">0</span>
+        </div>
       </div>
     </div>
 
@@ -139,6 +158,10 @@
         <div class="value" id="total-arrests">0</div>
       </div>
       <div class="stat-card">
+        <h4>Total FIRs</h4>
+        <div class="value" id="total-fir">0</div>
+      </div>
+      <div class="stat-card">
         <h4>States with Data</h4>
         <div class="value" id="states-with-data">0</div>
       </div>
@@ -146,6 +169,22 @@
         <h4>Last Updated</h4>
         <div class="value" id="last-updated">-</div>
       </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="data-table-container">
+      <h3>State-wise Breakdown</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>State/Agency</th>
+            <th>Arrests</th>
+            <th>FIRs</th>
+          </tr>
+        </thead>
+        <tbody id="data-table-body">
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -207,30 +246,33 @@
       event.preventDefault();
 
       const stateSelect = document.getElementById('state-select');
-      const countInput = document.getElementById('arrest-count');
+      const arrestInput = document.getElementById('arrest-count');
+      const firInput = document.getElementById('fir-count');
       const replaceCheckbox = document.getElementById('single-replace-mode');
 
       const state = stateSelect.value;
-      const count = parseInt(countInput.value, 10);
+      const arrests = parseInt(arrestInput.value, 10);
+      const fir = parseInt(firInput.value, 10);
       // Checked = replace, Unchecked = additive (default)
       const isAdditive = replaceCheckbox ? !replaceCheckbox.checked : true;
 
-      if (!state || isNaN(count)) {
+      if (!state || isNaN(arrests) || isNaN(fir)) {
         showFormMessage('Please fill all fields', 'error');
         return;
       }
 
       try {
         showFormMessage('Updating...', 'info');
-        await updateArrestCount(state, count, isAdditive);
+        await updateArrestCount(state, arrests, fir, isAdditive);
         const modeText = isAdditive ? 'added' : 'set';
-        showFormMessage(`Successfully ${modeText} ${count} arrests!`, 'success');
+        showFormMessage(`Successfully ${modeText} ${arrests} arrests and ${fir} FIRs!`, 'success');
 
         // Refresh map
         await refreshMap();
 
         // Reset form
-        countInput.value = '';
+        arrestInput.value = '';
+        firInput.value = '';
 
       } catch (error) {
         showFormMessage(error.message || 'Update failed', 'error');
@@ -403,19 +445,21 @@
         const trimmed = line.trim();
         if (!trimmed) return; // Skip empty lines
 
-        // Parse line: "State Name - Count"
+        // Parse line: "State Name - Arrests - FIRs"
         const parts = trimmed.split('-').map(s => s.trim());
 
-        if (parts.length !== 2) {
-          errors.push(`Line ${index + 1}: Invalid format "${sanitizeForDisplay(trimmed)}"`);
+        if (parts.length !== 3) {
+          errors.push(`Line ${index + 1}: Invalid format "${sanitizeForDisplay(trimmed)}" (expected: State - Arrests - FIRs)`);
           return;
         }
 
         // Security: Sanitize state name
         const rawState = parts[0].replace(/[<>\"'`\\]/g, '').trim();
         const state = rawState.toLowerCase();
-        const countStr = parts[1].replace(/[^0-9]/g, '');
-        const count = parseInt(countStr, 10);
+        const arrestStr = parts[1].replace(/[^0-9]/g, '');
+        const firStr = parts[2].replace(/[^0-9]/g, '');
+        const arrests = parseInt(arrestStr, 10);
+        const fir = parseInt(firStr, 10);
 
         // Validate state
         if (!validStates.includes(state) && state !== 'cbi') {
@@ -423,13 +467,17 @@
           return;
         }
 
-        // Validate count
-        if (isNaN(count) || count < 0 || count > 999999) {
-          errors.push(`Line ${index + 1}: Invalid count "${sanitizeForDisplay(parts[1])}"`);
+        // Validate counts
+        if (isNaN(arrests) || arrests < 0 || arrests > 999999) {
+          errors.push(`Line ${index + 1}: Invalid arrest count "${sanitizeForDisplay(parts[1])}"`);
+          return;
+        }
+        if (isNaN(fir) || fir < 0 || fir > 999999) {
+          errors.push(`Line ${index + 1}: Invalid FIR count "${sanitizeForDisplay(parts[2])}"`);
           return;
         }
 
-        validEntries.push({ state, count, display: rawState });
+        validEntries.push({ state, arrests, fir, display: rawState });
       });
 
       bulkParsedData = validEntries;
@@ -464,7 +512,7 @@
       entries.forEach(entry => {
         const item = document.createElement('div');
         item.className = 'preview-item';
-        item.textContent = `${entry.display}: ${entry.count}`;
+        item.textContent = `${entry.display}: ${entry.arrests} arrests, ${entry.fir} FIRs`;
         listEl.appendChild(item);
       });
 
@@ -522,16 +570,11 @@
       // Checked = replace, Unchecked = additive (default)
       const isAdditive = replaceCheckbox ? !replaceCheckbox.checked : true;
 
-      // Aggregate by state (handle CBI -> Delhi)
-      const aggregated = {};
-      bulkParsedData.forEach(entry => {
-        const targetState = entry.state === 'cbi' ? 'delhi' : entry.state;
-        aggregated[targetState] = (aggregated[targetState] || 0) + entry.count;
-      });
-
-      const updates = Object.entries(aggregated).map(([state, count]) => ({
-        state,
-        count
+      // Format updates for batch (keep CBI separate, don't aggregate)
+      const updates = bulkParsedData.map(entry => ({
+        state: entry.state,
+        arrests: entry.arrests,
+        fir: entry.fir
       }));
 
       try {

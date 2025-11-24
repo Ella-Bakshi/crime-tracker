@@ -1,16 +1,32 @@
 // Authentication Module
-const ADMIN_HASH = '166d1337c4641be7b320ddb2e0bad8be0bc630b3efb3917b0f2128ed5a5506d8';
-
 let currentUser = null;
 let isAdmin = false;
 let authStateListeners = [];
 
-async function hashEmail(email) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(email.toLowerCase());
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+async function checkAdminStatus(user) {
+  if (!user) return false;
+
+  try {
+    // Method 1: Check custom claims from ID token
+    const tokenResult = await user.getIdTokenResult();
+    if (tokenResult.claims.admin === true) {
+      return true;
+    }
+
+    // Method 2: Check admin_users collection in Firestore
+    const db = getFirestore();
+    if (db) {
+      const adminDocRef = db.collection('admin_users').doc(user.uid);
+      const adminDoc = await adminDocRef.get();
+      if (adminDoc.exists) {
+        return true;
+      }
+    }
+  } catch (error) {
+    // Silent fail - user is not admin
+  }
+
+  return false;
 }
 
 async function initAuth() {
@@ -21,9 +37,8 @@ async function initAuth() {
     currentUser = user;
     isAdmin = false;
 
-    if (user && user.email) {
-      const userHash = await hashEmail(user.email);
-      isAdmin = (userHash === ADMIN_HASH);
+    if (user) {
+      isAdmin = await checkAdminStatus(user);
     }
 
     updateAuthUI(user);

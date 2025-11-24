@@ -275,7 +275,8 @@
         firInput.value = '';
 
       } catch (error) {
-        showFormMessage(error.message || 'Update failed', 'error');
+        console.error('Update error:', error);
+        showFormMessage('Update failed. Please try again.', 'error');
       }
     }
 
@@ -304,7 +305,8 @@
         await refreshMap();
 
       } catch (error) {
-        showFormMessage(error.message || 'Delete failed', 'error');
+        console.error('Delete error:', error);
+        showFormMessage('Delete failed. Please try again.', 'error');
       }
     }
 
@@ -591,7 +593,8 @@
         await refreshMap();
 
       } catch (error) {
-        showBulkMessage(error.message || 'Upload failed', 'error');
+        console.error('Bulk upload error:', error);
+        showBulkMessage('Upload failed. Please try again.', 'error');
       }
     }
 

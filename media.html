@@ -220,12 +220,12 @@
     function sanitizeUrl(url) {
       try {
         const urlObj = new URL(url);
-        // Only allow http and https
+        // Only allow http and https protocols
         if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
           return null;
         }
-        // Prevent javascript: URLs
-        if (urlObj.href.toLowerCase().includes('javascript:')) {
+        // Block data: URLs that could be embedded in href
+        if (urlObj.href.toLowerCase().includes('data:')) {
           return null;
         }
         return urlObj.href;
@@ -343,7 +343,8 @@
         await loadAndDisplayMedia();
 
       } catch (error) {
-        showMediaMessage(error.message || 'Failed to add media', 'error');
+        console.error('Add media error:', error);
+        showMediaMessage('Failed to add media. Please try again.', 'error');
       }
     }
 
@@ -534,7 +535,8 @@
         await deleteMediaItem(mediaId);
         await loadAndDisplayMedia();
       } catch (error) {
-        alert('Failed to delete: ' + (error.message || 'Unknown error'));
+        console.error('Delete media error:', error);
+        alert('Failed to delete. Please try again.');
       }
     }
 
@@ -780,20 +782,48 @@
           w.charAt(0).toUpperCase() + w.slice(1)
         ).join(' ');
 
-        div.innerHTML = `
-          <span class="preview-num">${index + 1}.</span>
-          <span class="preview-state">${escapeHtml(stateDisplay)}</span>
-          <span class="preview-type ${item.type}">${item.type}</span>
-          <span class="preview-title">${escapeHtml(item.title)}</span>
-          ${item.needsConfirm ? '<span class="preview-warning">*</span>' : ''}
-        `;
+        // Use DOM methods instead of innerHTML to prevent XSS
+        const numSpan = document.createElement('span');
+        numSpan.className = 'preview-num';
+        numSpan.textContent = (index + 1) + '.';
+
+        const stateSpan = document.createElement('span');
+        stateSpan.className = 'preview-state';
+        stateSpan.textContent = stateDisplay;
+
+        const typeSpan = document.createElement('span');
+        typeSpan.className = 'preview-type ' + item.type;
+        typeSpan.textContent = item.type;
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'preview-title';
+        titleSpan.textContent = item.title;
+
+        div.appendChild(numSpan);
+        div.appendChild(stateSpan);
+        div.appendChild(typeSpan);
+        div.appendChild(titleSpan);
+
+        if (item.needsConfirm) {
+          const warningSpan = document.createElement('span');
+          warningSpan.className = 'preview-warning';
+          warningSpan.textContent = '*';
+          div.appendChild(warningSpan);
+        }
+
         previewList.appendChild(div);
       });
 
-      // Show errors
+      // Show errors using DOM methods
       if (errors.length > 0) {
-        previewErrors.innerHTML = '<strong>Errors:</strong><br>' +
-          errors.map(e => escapeHtml(e)).join('<br>');
+        previewErrors.innerHTML = '';
+        const strong = document.createElement('strong');
+        strong.textContent = 'Errors:';
+        previewErrors.appendChild(strong);
+        errors.forEach(e => {
+          previewErrors.appendChild(document.createElement('br'));
+          previewErrors.appendChild(document.createTextNode(e));
+        });
         previewErrors.style.display = 'block';
       } else {
         previewErrors.style.display = 'none';
